@@ -1,0 +1,150 @@
+Codes:
+//Q1//
+set seed 1234
+set obs 100
+gen nc=rnormal(0,1)
+gen dcstar=rnormal(0,1)
+gen dc=1 if dcstar > 0
+replace dc=0 if dcstar < 0
+gen clusterid=_n
+expandcl 100, generate(newclusterid) cluster(clusterid)
+gen eic=rnormal(0,1)
+gen yic=dc+ nc + nc*dc + eic
+local state = c(seed)
+//a//
+regress yic dc
+//b//
+regress yic dc, robust
+//c//
+regress yic dc, cluster(clusterid)
+
+//e//
+collapse (mean) meanyic=yic dc, by(clusterid)
+regress meanyic dc
+//f//
+regress meanyic dc, robust
+regress meanyic dc, hc2
+regress meanyic dc, hc3
+
+//g part a//
+program define dgp1, rclass
+        drop _all
+		set obs 100
+        gen nc=rnormal(0,1)
+        gen dcstar=rnormal(0,1)
+        gen dc=1 if dcstar > 0
+        replace dc=0 if dcstar < 0
+        gen clusterid=_n
+        expandcl 100, generate(newclusterid) cluster(clusterid)
+        gen eic=rnormal(0,1)
+        gen yic=dc+ nc + nc*dc + eic
+		regress yic dc
+		test dc=1
+		return scalar reject=r(p) < 0.05
+		regress yic dc, cluster(clusterid)
+		test dc=1
+		return scalar rejcluster=r(p) < 0.05
+		collapse (mean) meanyic=yic dc, by(clusterid)
+        regress meanyic dc
+		test dc=1
+		return scalar rejcollapse=r(p) < 0.05
+		regress meanyic dc, robust
+		test dc=1
+		return scalar rejcollapserobust=r(p) < 0.05
+        regress meanyic dc, hc2
+		test dc=1
+		return scalar rejcollapshc2=r(p) < 0.05
+end
+
+simulate reject=r(reject) rejcluster=r(rejcluster) rejcollapse=r(rejcollapse) rejcollapserobust=r(rejcollapserobust) rejcollapshc2=r(rejcollapshc2), reps(1000) nodots: dgp1
+
+sum 
+
+//Q2//
+
+destring, replace
+//a//
+sum
+ttest age, by(treat_real)
+ttest female, by(treat_real)
+ttest vote00, by(treat_real)
+ttest vote98, by(treat_real)
+ttest persons, by(treat_real)
+ttest newreg, by(treat_real)
+
+logit treat_real age female vote00 vote98 persons newreg
+
+//b//
+reg vote02 treat_real age female vote00 vote98 persons newreg, robust
+//bii//
+reg contact treat_real age female vote00 vote98 persons newreg
+reg vote02 contact age female vote00 vote98 persons newreg
+ivreg2 vote02 (contact=treat_real) age female vote00 vote98 persons newreg, first 
+//biii//
+reg contact treat_real age female vote00 vote98 persons newreg
+predict newvar, residuals
+rename newvar resids, replace
+reg vote02 contact resids age female vote00 vote98 persons newreg
+
+//c//
+
+reg vote02 contact
+reg vote02 contact age female vote00 vote98 persons newreg
+gen cage=contact*age
+gen cfemale=contact*female
+gen cvote00=contact*vote00
+gen cvote98=contact*vote98
+gen cpersons=contact*persons
+gen cnewreg=contact*newreg
+reg vote02 contact cage cfemale cvote00 cvote98 cpersons cnewreg age female vote00 vote98 persons newreg
+//
+ssc install psmatch2, replace
+
+//d//
+set seed 1234
+logit contact age female vote00 vote98 persons newreg
+
+predict p
+kdensity p
+kdensity p, bwidth(0.05)
+kdensity p, kernel(triangle)
+kdensity p if contact==1
+kdensity p if contact==0
+twoway kdensity p if contact==1 || kdensity p if contact==0
+
+gen w0=p/(1-p) if contact==0
+
+gen yw=vote02*w0 if contact==0
+
+egen a=mean(vote02) if contact==1
+
+egen c=sum(yw) if contact==0
+replace c=3680.912
+egen d=sum(w0) if contact==0
+replace d=5757.051
+gen e=c/d
+
+
+gen beta= a-e
+
+//iv//
+gen lambda= contact + (1-contact)*(p/(1-p))
+reg vote02 contact age female vote00 vote98 persons newreg [w=lambda], robust
+
+match vote02 contact age female vote00 vote98 persons newreg
+
+//v//
+psmatch2 contact age female vote00 vote98 persons newreg, out(vote02) ate
+
+psmatch2 contact, out(vote02) pscore(p) ate
+
+//vi//
+drop if contact==.
+psmatch2 contact, out(vote02) pscore(p) n(1) ate
+
+pscore contact age female vote00 vote98 persons newreg, pscore(p1) blockid(id)
+atts vote02 contact age female vote00 vote98 persons newreg, pscore(p1) blockid(id)
+
+psmatch2 contact, radius caliper(0.01) out(vote02) pscore(p) ate
+
+psmatch2 contact, kernel out(vote02) pscore(p) ate
